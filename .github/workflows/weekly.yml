@@ -58,6 +58,8 @@ jobs:
             echo "No changes to commit."
           else
             git commit -m "chore: weekly AI trending report $(date -u +%Y-%m-%d)"
+            # Rebase onto any newer commits (e.g. a re-run) so the push can't collide.
+            git pull --rebase -X ours origin main || true
             git push
           fi
 
