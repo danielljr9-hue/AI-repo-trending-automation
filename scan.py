@@ -293,6 +293,105 @@ def render(new_repos: list, trend_repos: list) -> str:
 </html>"""
 
 
+# --- Email-safe HTML ---------------------------------------------------------
+# Mail clients (especially Gmail) strip <style> blocks, CSS variables and
+# flexbox, so the emailed copy is rendered separately with inline styles and a
+# table-based layout on a light background.
+
+def email_card(rank: int, r: dict) -> str:
+    name = html.escape(r["full_name"])
+    url = html.escape(r["html_url"])
+    desc = html.escape(r.get("description") or "No description provided.")
+    lang = html.escape(r.get("language") or "—")
+    created = fmt_date(r["created_at"])
+    chips = "".join(
+        f'<span style="background:#eef2ff;color:#3949ab;font-size:12px;'
+        f'padding:2px 8px;border-radius:10px;margin-right:5px;'
+        f'display:inline-block;margin-top:4px;">{html.escape(t)}</span>'
+        for t in (r.get("topics") or [])[:6]
+    )
+    return f"""
+      <table width="100%" cellpadding="0" cellspacing="0" role="presentation"
+             style="border:1px solid #e3e6ea;border-radius:8px;margin-bottom:12px;">
+        <tr><td style="padding:14px 16px;">
+          <table width="100%" cellpadding="0" cellspacing="0" role="presentation"><tr>
+            <td style="font-size:15px;color:#111;">
+              <strong>{rank}.</strong>
+              <a href="{url}" style="color:#2563eb;text-decoration:none;">{name}</a>
+            </td>
+            <td align="right" style="font-size:14px;color:#b7791f;font-weight:bold;white-space:nowrap;">
+              &#9733; {stars(r['stargazers_count'])}
+            </td>
+          </tr></table>
+          <div style="font-size:13px;color:#374151;margin:8px 0;">{desc}</div>
+          <div style="font-size:12px;color:#6b7280;">{lang} &middot; Created {created}</div>
+          <div style="margin-top:6px;">{chips}</div>
+        </td></tr>
+      </table>"""
+
+
+def email_section(title: str, subtitle: str, repos: list, empty: str) -> str:
+    if repos:
+        cards = "".join(email_card(i + 1, r) for i, r in enumerate(repos))
+    else:
+        cards = f'<p style="color:#6b7280;font-style:italic;">{empty}</p>'
+    return f"""
+      <h2 style="font-size:19px;color:#111;margin:28px 0 2px;">{title}</h2>
+      <p style="font-size:13px;color:#6b7280;margin:0 0 14px;">{subtitle}</p>
+      {cards}"""
+
+
+def render_email(new_repos: list, trend_repos: list) -> str:
+    now = datetime.now(timezone.utc)
+    generated = now.strftime("%A, %B %-d, %Y")
+    new_from = (now - timedelta(days=NEW_WINDOW_DAYS)).strftime("%b %-d")
+    report_url = os.environ.get("REPORT_URL", "")
+
+    button = ""
+    if report_url:
+        button = (
+            f'<a href="{html.escape(report_url)}" '
+            f'style="display:inline-block;background:#2563eb;color:#ffffff;'
+            f'text-decoration:none;font-size:14px;padding:9px 18px;border-radius:8px;'
+            f'margin-top:10px;">View the full report online &rarr;</a>'
+        )
+
+    new_html = email_section(
+        "🆕 New This Week",
+        f"Top {TOP_N} AI repos created since {new_from}, ranked by stars.",
+        new_repos,
+        "No new AI repos cleared the bar this week.",
+    )
+    trend_html = email_section(
+        "🔥 Trending Now",
+        "Established AI repos still actively shipping and gaining stars.",
+        trend_repos,
+        "No trending AI repos found this week.",
+    )
+
+    return f"""<!DOCTYPE html>
+<html><body style="margin:0;background:#f4f5f7;">
+  <table width="100%" cellpadding="0" cellspacing="0" role="presentation" style="background:#f4f5f7;">
+    <tr><td align="center" style="padding:24px 12px;">
+      <table width="640" cellpadding="0" cellspacing="0" role="presentation"
+             style="max-width:640px;background:#ffffff;border-radius:12px;padding:28px 28px 36px;
+                    font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;">
+        <tr><td>
+          <h1 style="font-size:24px;color:#111;margin:0 0 4px;">AI GitHub Trending</h1>
+          <p style="font-size:13px;color:#6b7280;margin:0;">Generated {generated} (UTC)</p>
+          {button}
+          {new_html}
+          {trend_html}
+          <p style="font-size:12px;color:#9ca3af;margin-top:32px;text-align:center;">
+            Auto-generated every Monday &middot; data from the GitHub Search API.
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+
+
 # --- Main --------------------------------------------------------------------
 
 def main() -> int:
@@ -312,8 +411,14 @@ def main() -> int:
         with open(path, "w", encoding="utf-8") as f:
             f.write(html_out)
 
+    # Email-safe copy (not committed) for the weekly email step.
+    email_path = os.path.join(root, "email_report.html")
+    with open(email_path, "w", encoding="utf-8") as f:
+        f.write(render_email(new_repos, trend_repos))
+
     print(f"Wrote {dated}", file=sys.stderr)
     print(f"Wrote {latest}", file=sys.stderr)
+    print(f"Wrote {email_path}", file=sys.stderr)
     print(
         f"New: {len(new_repos)} repos | Trending: {len(trend_repos)} repos",
         file=sys.stderr,

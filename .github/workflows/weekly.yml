@@ -2,8 +2,8 @@ name: Weekly AI GitHub Trending
 
 on:
   schedule:
-    # Every Monday at 13:00 UTC (09:00 US Eastern / 06:00 US Pacific).
-    - cron: "0 13 * * 1"
+    # Every Monday at 01:00 UTC == 09:00 Singapore time (SGT, UTC+8).
+    - cron: "0 1 * * 1"
   workflow_dispatch: {}   # allow manual "Run workflow" from the Actions tab
 
 permissions:
@@ -28,7 +28,26 @@ jobs:
       - name: Generate weekly report
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT_URL: https://danielljr9-hue.github.io/AI-repo-trending-automation/
         run: python scan.py
+
+      - name: Report date
+        id: meta
+        run: echo "today=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Email the report
+        continue-on-error: true   # never let email trouble block the web report
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "AI GitHub Trending — ${{ steps.meta.outputs.today }}"
+          to: danielljr9@gmail.com
+          from: AI GitHub Trending <${{ secrets.MAIL_USERNAME }}>
+          html_body: file://email_report.html
 
       - name: Commit report archive
         run: |
