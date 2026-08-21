@@ -226,27 +226,34 @@ def render(new_repos: list, trend_repos: list) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI GitHub Trending &middot; {generated}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;display=swap">
 <style>
+  /* House style, 20 Aug 2026 — the Tabler-derived palette and type scale used
+     across the dashboards. This page ships standalone (it is served from
+     docs/ as a GitHub Page), so the tokens are declared here rather than
+     linked from CoWork OS/_system. */
   :root {{
-    --bg: #0d1117; --panel: #161b22; --border: #30363d;
-    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
-    --star: #f0b429; --chip: #1f2937; --chip-text: #9fb6d6;
+    --bg: #f9fafb; --panel: #ffffff; --border: #e5e7eb;
+    --text: #111827; --muted: #6b7280; --accent: #066fd1;
+    --star: #f59f00; --chip: #f3f4f6; --chip-text: #4b5563;
   }}
   * {{ box-sizing: border-box; }}
   body {{
     margin: 0; background: var(--bg); color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    line-height: 1.5;
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px; line-height: 1.4285714; -webkit-font-smoothing: antialiased;
   }}
   .wrap {{ max-width: 860px; margin: 0 auto; padding: 40px 20px 80px; }}
-  header h1 {{ font-size: 28px; margin: 0 0 4px; }}
+  header h1 {{ font-size: 24px; margin: 0 0 4px; }}
   header .gen {{ color: var(--muted); margin: 0 0 8px; font-size: 14px; }}
   section {{ margin-top: 44px; }}
-  h2 {{ font-size: 22px; margin: 0 0 2px; }}
+  h2 {{ font-size: 20px; margin: 0 0 2px; }}
   .subtitle {{ color: var(--muted); margin: 0 0 20px; font-size: 14px; }}
   .card {{
     display: flex; gap: 16px; background: var(--panel);
-    border: 1px solid var(--border); border-radius: 12px;
+    border: 1px solid var(--border); border-radius: 8px;
     padding: 18px 20px; margin-bottom: 14px;
   }}
   .card:hover {{ border-color: var(--accent); }}
