@@ -36,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 
 VALUABLE_AT = 45      # score >= this  -> genuinely worth installing
 MAYBE_AT = 15         # score >= this  -> borderline, worth a look
-MAX_INSTALLS = 5      # cap install attempts per week (each one is slow)
+MAX_INSTALLS = 8      # cap install attempts per week (each one is slow)
 INSTALL_TIMEOUT = 300 # seconds per install command
 
 # Topics/names that mark a repo as a reading list, not software.
@@ -53,10 +53,11 @@ FLUFF_NAME = re.compile(
     re.I,
 )
 
-# Root files that prove the repo is installable software, mapped to how to build it.
-# requirements.txt is deliberately excluded: a bare dependency list means a folder
-# of scripts, not a package you can install - the classic tell of a course repo.
-MANIFESTS = {
+# Root files that prove a repo is real software. Three tiers, because "can I
+# install this automatically" and "is this a real project" are different questions
+# -- a Zig plugin or a CMake tool is unmistakably software even though nothing here
+# can `pip install` it.
+MANIFESTS = {                      # real packages, and we can install them
     "pyproject.toml": "python",
     "setup.py": "python",
     "setup.cfg": "python",
@@ -64,7 +65,25 @@ MANIFESTS = {
     "cargo.toml": "rust",
     "go.mod": "go",
 }
+BUILD_MANIFESTS = {                # real software, but not auto-installed here
+    "build.zig": "zig",
+    "cmakelists.txt": "cmake",
+    "makefile": "make",
+    "pom.xml": "java",
+    "build.gradle": "java",
+    "build.gradle.kts": "java",
+    "composer.json": "php",
+    "gemfile": "ruby",
+    "pubspec.yaml": "dart",
+    "package.swift": "swift",
+    "deno.json": "deno",
+    "mix.exs": "elixir",
+}
+BUILD_SUFFIXES = (".csproj", ".sln", ".cabal", ".nimble")   # matched by extension
 WEAK_MANIFESTS = {"requirements.txt": "python"}
+
+# Only these can actually be installed unattended; the rest get a command instead.
+INSTALLABLE = {"python", "node", "go"}
 
 API_ROOT = "https://api.github.com"
 
@@ -142,11 +161,20 @@ def fetch_extras(full_name: str) -> dict:
         ),
         "has_ci": ".github" in names,
         "manifests": [n for n in names if n in MANIFESTS],
+        "build_manifests": [
+            n for n in names
+            if n in BUILD_MANIFESTS or n.endswith(BUILD_SUFFIXES)
+        ],
         "weak_manifests": [n for n in names if n in WEAK_MANIFESTS],
     }
 
 
 # --- Scoring -----------------------------------------------------------------
+
+def any_manifest(x: dict) -> bool:
+    """Any evidence at all that this repo builds or installs into something."""
+    return bool(x.get("manifests") or x.get("build_manifests") or x.get("weak_manifests"))
+
 
 def score(r: dict, x: dict) -> tuple[int, list]:
     """Return (points, notes) where notes are (delta, reason) pairs, best first."""
@@ -176,10 +204,12 @@ def score(r: dict, x: dict) -> tuple[int, list]:
 
     if x["manifests"]:
         note(25, f"Real package manifest ({', '.join(x['manifests'])})")
+    elif x.get("build_manifests"):
+        note(20, f"Builds from source ({', '.join(x['build_manifests'])})")
     elif x.get("weak_manifests"):
         note(5, "Only a requirements.txt — a script folder, not a package")
     else:
-        note(-30, "No package manifest — there is nothing to install")
+        note(-18, "No manifest of any kind — nothing to install or build")
 
     if lang in (None, "Markdown", "HTML", "CSS", "Text"):
         note(-20, f"Primary language is {lang or 'none'} — it's documents, not code")
@@ -222,7 +252,7 @@ def score(r: dict, x: dict) -> tuple[int, list]:
 
     # --- Hype tells ---
     per_day = stars_n / age_days
-    if per_day > 400 and x["contributors"] <= 1 and not x["manifests"]:
+    if per_day > 400 and x["contributors"] <= 1 and not any_manifest(x):
         note(-20, f"{per_day:.0f} stars/day with one contributor and no code to install")
     forks = r.get("forks_count", 0)
     if stars_n >= 2000 and forks / max(stars_n, 1) < 0.01:
@@ -257,10 +287,29 @@ def _clean_env() -> dict:
     return env
 
 
+# Build tools trail off into log paths and "run with --verbose" chatter, so scan
+# upwards for the line that actually names the failure.
+_VERDICT_LINE = re.compile(
+    r"npm error code|ERESOLVE|^error(\[\w+\])?:|Error:|^fatal:|No matching distribution"
+    r"|could not find|not found|Permission denied|timed out",
+    re.I | re.M,
+)
+_NOISE_LINE = re.compile(r"complete log of this run|for more information|^npm error\s*$"
+                         r"|^\s*\^+\s*$|log file|--verbose", re.I)
+
+
 def last_line(text: str) -> str:
-    """The final non-blank line — where build tools put the actual error."""
+    """The line that names the failure, not whatever the tool printed last."""
     lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
-    return lines[-1] if lines else "no output"
+    if not lines:
+        return "no output"
+    for ln in reversed(lines):
+        if _VERDICT_LINE.search(ln) and not _NOISE_LINE.search(ln):
+            return ln
+    for ln in reversed(lines):
+        if not _NOISE_LINE.search(ln):
+            return ln
+    return lines[-1]
 
 
 def _run(cmd, cwd, timeout=INSTALL_TIMEOUT):
@@ -283,6 +332,10 @@ def kind_of(x: dict) -> str | None:
             return MANIFESTS[name]
     if x.get("weak_manifests"):
         return "python"
+    for name in x.get("build_manifests", []):
+        if name in BUILD_MANIFESTS:
+            return BUILD_MANIFESTS[name]
+        return name.rsplit(".", 1)[-1]
     return None
 
 
@@ -307,8 +360,10 @@ def try_install(full_name: str, kind: str, url: str | None = None) -> dict:
              url or f"https://github.com/{full_name}.git", src],
             cwd=work, timeout=180,
         )
+        hint = install_hint(full_name, kind)
         if rc != 0:
-            return {"ok": False, "how": "git clone", "detail": err.strip()}
+            return {"ok": False, "how": "git clone", "hint": hint,
+                    "detail": err.strip()}
 
         if kind == "python":
             venv = os.path.join(work, "venv")
@@ -318,21 +373,24 @@ def try_install(full_name: str, kind: str, url: str | None = None) -> dict:
             pip = os.path.join(venv, "bin", "pip")
             files = os.listdir(src)
             if "pyproject.toml" in files or "setup.py" in files:
-                cmd, how = [pip, "install", "--no-input", "."], f"pip install git+https://github.com/{full_name}"
+                cmd, how = [pip, "install", "--no-input", "."], "pip install ."
             elif "requirements.txt" in files:
                 cmd, how = [pip, "install", "--no-input", "-r", "requirements.txt"], "pip install -r requirements.txt"
             else:
-                return {"ok": False, "how": "python", "detail": "no installable entry point"}
+                return {"ok": False, "how": "python", "hint": hint,
+                        "detail": "no installable entry point"}
         elif kind == "node":
             cmd = ["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]
             how = "npm install"
         elif kind == "go":
             cmd, how = ["go", "build", "./..."], "go build ./..."
         else:
-            return {"ok": None, "how": kind, "detail": "no automated install for this ecosystem"}
+            return {"ok": None, "how": kind, "hint": hint,
+                    "detail": "no automated install for this ecosystem"}
 
         rc, err = _run(cmd, cwd=src)
-        return {"ok": rc == 0, "how": how, "detail": "" if rc == 0 else err.strip()}
+        return {"ok": rc == 0, "how": how, "hint": hint,
+                "detail": "" if rc == 0 else err.strip()}
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
@@ -367,7 +425,8 @@ def eval_card(res: dict) -> str:
             f'<div style="font-size:12px;color:#166534;margin-top:10px;">'
             f'Installed cleanly in a fresh container. To adopt it locally:<br>'
             f'<code style="background:#f3f4f6;padding:3px 6px;border-radius:4px;'
-            f'display:inline-block;margin-top:4px;font-size:12px;">{html.escape(inst["how"])}</code></div>'
+            f'display:inline-block;margin-top:4px;font-size:12px;">'
+            f'{html.escape(inst.get("hint") or inst["how"])}</code></div>'
         )
     elif inst and inst.get("ok") is False:
         footer = (
@@ -491,7 +550,7 @@ def main() -> int:
     for i, (full_name, r) in enumerate(repos.items(), 1):
         x = fetch_extras(full_name)
         points, notes = score(r, x)
-        v = verdict(points, installable=bool(x["manifests"] or x["weak_manifests"]))
+        v = verdict(points, installable=any_manifest(x))
         print(f"[{i}/{len(repos)}] {full_name}: {points} -> {v}", file=sys.stderr)
         results.append({"repo": r, "extras": x, "points": points,
                         "notes": notes, "verdict": v})
@@ -514,7 +573,7 @@ def main() -> int:
         if res["verdict"] != "valuable" or attempted >= MAX_INSTALLS:
             continue
         kind = kind_of(res["extras"])
-        if not kind:
+        if kind not in INSTALLABLE:
             continue
         attempted += 1
         print(f"Installing {res['repo']['full_name']} ({kind})...", file=sys.stderr)
