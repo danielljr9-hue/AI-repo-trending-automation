@@ -63,6 +63,13 @@ jobs:
             git push
           fi
 
+      - name: Upload this week's picks for evaluation
+        uses: actions/upload-artifact@v4
+        with:
+          name: week
+          path: week.json
+          retention-days: 7
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
@@ -78,3 +85,62 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+  # Second pass: judge every repo in the report on evidence, install the ones that
+  # earn it, and email the verdicts.
+  #
+  # This job runs code from repos neither of us has read, so it is deliberately
+  # kept away from anything worth stealing: its own GITHUB_TOKEN is read-only,
+  # the checkout stores no git credentials, and evaluate.py strips every secret
+  # from the environment before the first install runs.
+  evaluate:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: week
+
+      - name: Sanity-check the judge
+        run: python evaluate.py --selftest
+
+      - name: Report date
+        id: meta
+        run: echo "today=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate and install
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python evaluate.py
+
+      - name: Email the verdicts
+        continue-on-error: true   # a mail hiccup must not fail the run
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "Worth installing? — verdicts on ${{ steps.meta.outputs.today }}"
+          to: danielljr9@gmail.com
+          from: AI GitHub Trending <${{ secrets.MAIL_USERNAME }}>
+          html_body: file://eval_email.html
+
+      - name: Keep the verdicts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evaluation
+          path: eval-*.json
+          retention-days: 90

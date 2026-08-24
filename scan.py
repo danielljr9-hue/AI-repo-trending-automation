@@ -423,9 +423,17 @@ def main() -> int:
     with open(email_path, "w", encoding="utf-8") as f:
         f.write(render_email(new_repos, trend_repos))
 
+    # Machine-readable copy of this week's picks, consumed by evaluate.py.
+    week_path = os.path.join(root, "week.json")
+    with open(week_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {"generated": stamp, "new": new_repos, "trending": trend_repos}, f
+        )
+
     print(f"Wrote {dated}", file=sys.stderr)
     print(f"Wrote {latest}", file=sys.stderr)
     print(f"Wrote {email_path}", file=sys.stderr)
+    print(f"Wrote {week_path}", file=sys.stderr)
     print(
         f"New: {len(new_repos)} repos | Trending: {len(trend_repos)} repos",
         file=sys.stderr,
