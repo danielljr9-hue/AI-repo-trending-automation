@@ -22,11 +22,61 @@ at 13:00 UTC**. It:
 - generates the report,
 - archives it to `reports/ai-trending-YYYY-MM-DD.html`,
 - writes the latest report to `docs/index.html`,
-- commits both back to the repo, and
-- publishes the latest report to **GitHub Pages** (a live URL you can bookmark).
+- commits both back to the repo,
+- publishes the latest report to **GitHub Pages** (a live URL you can bookmark), and
+- runs the [evaluation pass](#the-second-pass-is-any-of-it-worth-installing) and emails
+  you which of the week's repos are actually worth installing.
 
 You can also trigger it any time from the **Actions** tab → *Weekly AI GitHub Trending*
 → **Run workflow**.
+
+## The second pass: is any of it worth installing?
+
+Trending tells you what got starred, not what is worth your time. After the report is
+built, a second job runs [`evaluate.py`](evaluate.py) over every repo in it and emails
+you a separate verdict.
+
+Each repo is scored on evidence, never on stars:
+
+| Signal | Why it matters |
+|---|---|
+| Package manifest (`pyproject.toml`, `package.json`, `go.mod`, …) | If there is nothing to install, it is not a tool |
+| Contributors, commits in the last 30 days | Is anyone actually maintaining it |
+| Tests, CI, licence | Whether it was built to be used by other people |
+| README weight vs. code | A 100 KB README with no package is a course, not a library |
+| Reading-list topics, `awesome-*` names | Curated lists are not software |
+| Stars-per-day, forks-to-stars ratio | Separates a launch spike from real adoption |
+
+Two rules do most of the work. **No package manifest means a repo can never be rated
+"valuable"** however many stars it has, and **a bare `requirements.txt` counts as a
+folder of scripts, not a package** — that single distinction is what separates a
+tutorial repo from a library.
+
+Repos that clear the bar are then **actually installed** — shallow-cloned into a fresh
+container and built with `pip` / `npm` / `go`, which is the check no amount of scoring
+can fake. The email reports what installed cleanly, what failed and why, what is
+borderline, and what was skipped as fluff.
+
+### Safety
+
+`evaluate.py` runs code from repos nobody has reviewed, so the install phase is fenced off:
+
+- it runs in its **own job** with a **read-only** `GITHUB_TOKEN`;
+- the checkout uses `persist-credentials: false`, so there is no git credential to steal;
+- every variable matching `TOKEN|SECRET|PASSWORD|KEY|AUTH` is **stripped from the
+  environment** before the first subprocess starts;
+- `npm` runs with `--ignore-scripts`, and each command is hard-timed-out;
+- it **refuses to install outside CI** — a local `python3 evaluate.py` scores only.
+  Pass `--install` if you really mean it.
+
+Tune the thresholds at the top of `evaluate.py`: `VALUABLE_AT`, `MAYBE_AT`,
+`MAX_INSTALLS` (installs attempted per week) and `INSTALL_TIMEOUT`.
+
+Check the judge still behaves with:
+
+```bash
+python3 evaluate.py --selftest
+```
 
 ## One-time setup
 
